@@ -295,9 +295,14 @@
           <div class="alert alert-info small mb-3">
             <b><i class="bi bi-info-circle me-1"></i>Como configurar (feito 1 vez por toda a equipe):</b><br>
             1. Abra o arquivo <code>apps-script.gs</code> e siga as instruções dentro dele<br>
-            2. Após implantar, copie a <b>URL do Aplicativo da Web</b><br>
-            3. Cole abaixo e clique em <b>Salvar e Testar</b><br>
-            4. Compartilhe o link do GitHub Pages com todos — dados sincronizados automaticamente ✅
+            2. Ao implantar, defina <b>Quem tem acesso: Qualquer pessoa</b> (não "na organização")<br>
+            3. Copie a <b>URL do Aplicativo da Web</b> gerada<br>
+            4. Cole abaixo e clique em <b>Salvar e Testar</b><br>
+            5. Compartilhe o link do GitHub Pages com todos — dados sincronizados a cada 15s ✅
+          </div>
+          <div class="alert alert-warning small mb-3" id="sheets-cors-warn" style="display:none">
+            <b>⚠️ Acesso configurado como "na organização"?</b><br>
+            O GitHub Pages não consegue autenticar com o Google automaticamente. Reimplante o Apps Script com <b>Quem tem acesso: Qualquer pessoa</b>.
           </div>
           <label class="form-label fw-bold">URL do Apps Script</label>
           <input id="sheets-url" class="form-control mb-2" placeholder="https://script.google.com/macros/s/.../exec">
@@ -422,9 +427,11 @@ async function saveSheetsCfg() {
   const data = await sheetsRead();
   if (data && !data.error) {
     st.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Conectado! Sincronização ativa a cada 15 segundos.</span>';
+    document.getElementById('sheets-cors-warn').style.display = 'none';
     await syncFromSheets(); startPolling();
   } else {
-    st.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Falha. Verifique a URL e as permissões do Apps Script.</span>';
+    st.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Falha na conexão.<br><b>Causa mais comum:</b> o Apps Script foi implantado com acesso "Qualquer pessoa <u>na organização</u>" — troque para <b>"Qualquer pessoa"</b> e reimplante (cria nova versão).</span>';
+    document.getElementById('sheets-cors-warn').style.display = '';
     sheetsUrl = ''; setBadge('offline');
   }
 }
