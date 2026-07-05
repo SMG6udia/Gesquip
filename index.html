@@ -178,6 +178,7 @@
           <button class="btn btn-outline-danger btn-sm" onclick="selectCondition('checkout','Com avaria')">🔧 Com avaria</button>
         </div>
         <div id="co-cond-result" class="mt-2"></div>
+        <textarea id="co-obs" class="form-control form-control-sm mt-2" rows="2" placeholder="Observações (opcional)..."></textarea>
       </div>
       <button class="btn btn-primary w-100 mt-2" id="co-confirm-btn" onclick="confirmCheckout()" disabled><i class="bi bi-check-circle me-2"></i>Confirmar Entrega</button>
       <button class="btn btn-outline-secondary w-100 mt-2" onclick="resetCheckout()"><i class="bi bi-arrow-counterclockwise me-1"></i>Reiniciar</button>
@@ -215,6 +216,7 @@
           <button class="btn btn-outline-danger btn-sm" onclick="selectCondition('return','Com avaria')">🔧 Com avaria</button>
         </div>
         <div id="ret-cond-result" class="mt-2"></div>
+        <textarea id="ret-obs" class="form-control form-control-sm mt-2" rows="2" placeholder="Observações (opcional)..."></textarea>
       </div>
       <button class="btn btn-success w-100 mt-2" id="ret-confirm-btn" onclick="confirmReturn()" disabled><i class="bi bi-check-circle me-2"></i>Confirmar Devolução</button>
       <button class="btn btn-outline-secondary w-100 mt-2" onclick="resetReturn()"><i class="bi bi-arrow-counterclockwise me-1"></i>Reiniciar</button>
@@ -264,6 +266,11 @@
             <span class="text-muted small ms-2">Colunas: serial, modelo, tipo</span>
           </div>
           <input type="search" class="form-control form-control-sm mb-2" placeholder="Buscar aparelho..." oninput="renderDeviceList(this.value)">
+          <div class="d-flex align-items-center gap-2 mb-1" id="dev-bulk-bar" style="display:none!important">
+            <input type="checkbox" id="dev-select-all" onchange="toggleSelectAllDevices(this.checked)" title="Selecionar todos">
+            <label for="dev-select-all" class="small text-muted mb-0">Selecionar todos</label>
+            <button class="btn btn-danger btn-sm ms-auto" id="dev-delete-btn" onclick="deleteSelectedDevices()" style="display:none"><i class="bi bi-trash me-1"></i>Excluir selecionados (<span id="dev-sel-count">0</span>)</button>
+          </div>
           <div id="dev-list" style="max-height:360px;overflow-y:auto"></div>
         </div>
         <div class="tab-pane fade" id="cad-emp">
@@ -277,6 +284,11 @@
             <span class="text-muted small ms-2">Colunas: matricula, nome</span>
           </div>
           <input type="search" class="form-control form-control-sm mb-2" placeholder="Buscar colaborador..." oninput="renderEmployeeList(this.value)">
+          <div class="d-flex align-items-center gap-2 mb-1" id="emp-bulk-bar" style="display:none!important">
+            <input type="checkbox" id="emp-select-all" onchange="toggleSelectAllEmployees(this.checked)" title="Selecionar todos">
+            <label for="emp-select-all" class="small text-muted mb-0">Selecionar todos</label>
+            <button class="btn btn-danger btn-sm ms-auto" id="emp-delete-btn" onclick="deleteSelectedEmployees()" style="display:none"><i class="bi bi-trash me-1"></i>Excluir selecionados (<span id="emp-sel-count">0</span>)</button>
+          </div>
           <div id="emp-list" style="max-height:360px;overflow-y:auto"></div>
         </div>
       </div>
@@ -513,18 +525,28 @@ async function init() {
     el.addEventListener('shown.bs.tab', () => refreshCurrentTab());
   });
 
-  document.getElementById('co-deliverer').addEventListener('input', () => {
-    const ok = document.getElementById('co-deliverer').value.trim().length >= 2;
-    document.getElementById('co-emp-input').disabled = !ok;
-    document.getElementById('co-step0').className = 'step-card done';
-    document.getElementById('co-step1').className = ok ? 'step-card active' : 'step-card';
-  });
-  document.getElementById('ret-receiver').addEventListener('input', () => {
-    const ok = document.getElementById('ret-receiver').value.trim().length >= 2;
-    document.getElementById('ret-emp-input').disabled = !ok;
-    document.getElementById('ret-step0').className = 'step-card done';
-    document.getElementById('ret-step1').className = ok ? 'step-card active' : 'step-card';
-  });
+  function setupNameField(nameId, empInputId, step0Id, step1Id) {
+    const nameEl = document.getElementById(nameId);
+    const empEl  = document.getElementById(empInputId);
+    nameEl.addEventListener('input', () => {
+      const ok = nameEl.value.trim().length >= 2;
+      empEl.disabled = !ok;
+      document.getElementById(step0Id).className = 'step-card done';
+      document.getElementById(step1Id).className = ok ? 'step-card active' : 'step-card';
+    });
+    // Enter or mobile "next" button → advance to QR input
+    nameEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && nameEl.value.trim().length >= 2) {
+        e.preventDefault();
+        empEl.disabled = false;
+        document.getElementById(step0Id).className = 'step-card done';
+        document.getElementById(step1Id).className = 'step-card active';
+        empEl.focus();
+      }
+    });
+  }
+  setupNameField('co-deliverer', 'co-emp-input', 'co-step0', 'co-step1');
+  setupNameField('ret-receiver', 'ret-emp-input', 'ret-step0', 'ret-step1');
 
   setupScanInput('co-emp-input', handleCoEmpScan);
   setupScanInput('co-dev-input', handleCoDevScan);
@@ -585,7 +607,7 @@ function beep(ok = true) {
 // ==========================================
 // CHECKOUT
 // ==========================================
-let coState = { employee: null, device: null, condition: null };
+let coState = { employee: null, device: null, condition: null, obs: '' };
 
 function handleCoEmpScan(val) {
   const emp = employees.find(e => String(e.matricula) === String(val) || e.nome?.toLowerCase() === val.toLowerCase());
@@ -648,8 +670,9 @@ function selectCondition(flow, cond) {
 async function confirmCheckout() {
   if (!coState.employee || !coState.device) return;
   const deliverer = document.getElementById('co-deliverer').value.trim() || '—';
+  const obs = document.getElementById('co-obs').value.trim();
   const now = new Date().toISOString();
-  const tx = { id: Date.now().toString(), type: 'checkout', datetime: now, checkoutTime: now, employeeMat: coState.employee.matricula, employeeName: coState.employee.nome, deviceSerial: coState.device.serial, deviceModelo: coState.device.modelo || '', deviceTipo: coState.device.tipo, condition: coState.condition || 'Não informado', deliveredBy: deliverer };
+  const tx = { id: Date.now().toString(), type: 'checkout', datetime: now, checkoutTime: now, employeeMat: coState.employee.matricula, employeeName: coState.employee.nome, deviceSerial: coState.device.serial, deviceModelo: coState.device.modelo || '', deviceTipo: coState.device.tipo, condition: coState.condition || 'Não informado', obs: obs, deliveredBy: deliverer };
   const idx = devices.findIndex(d => String(d.serial) === String(coState.device.serial));
   devices[idx].currentHolderMat = coState.employee.matricula;
   devices[idx].currentHolderName = coState.employee.nome;
@@ -662,9 +685,10 @@ async function confirmCheckout() {
 }
 
 function resetCheckout() {
-  coState = { employee: null, device: null, condition: null };
+  coState = { employee: null, device: null, condition: null, obs: '' };
   ['co-deliverer','co-emp-input','co-dev-input'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.className = 'form-control scan-input'; });
   ['co-emp-result','co-dev-result','co-cond-result'].forEach(id => { document.getElementById(id).innerHTML = ''; });
+  document.getElementById('co-obs').value = '';
   document.getElementById('co-emp-input').disabled = true;
   document.getElementById('co-dev-input').disabled = true;
   document.getElementById('co-confirm-btn').disabled = true;
@@ -674,7 +698,7 @@ function resetCheckout() {
 // ==========================================
 // RETURN
 // ==========================================
-let retState = { employee: null, device: null, condition: null };
+let retState = { employee: null, device: null, condition: null, obs: '' };
 
 function handleRetEmpScan(val) {
   const emp = employees.find(e => String(e.matricula) === String(val) || e.nome?.toLowerCase() === val.toLowerCase());
@@ -716,8 +740,9 @@ function proceedRetDevScan(dev, el, res) {
 async function confirmReturn() {
   if (!retState.employee || !retState.device) return;
   const receiver = document.getElementById('ret-receiver').value.trim() || '—';
+  const obs = document.getElementById('ret-obs').value.trim();
   const now = new Date().toISOString();
-  const tx = { id: Date.now().toString(), type: 'return', datetime: now, returnTime: now, employeeMat: retState.employee.matricula, employeeName: retState.employee.nome, deviceSerial: retState.device.serial, deviceModelo: retState.device.modelo || '', deviceTipo: retState.device.tipo, condition: retState.condition || 'Não informado', receivedBy: receiver };
+  const tx = { id: Date.now().toString(), type: 'return', datetime: now, returnTime: now, employeeMat: retState.employee.matricula, employeeName: retState.employee.nome, deviceSerial: retState.device.serial, deviceModelo: retState.device.modelo || '', deviceTipo: retState.device.tipo, condition: retState.condition || 'Não informado', obs: obs, receivedBy: receiver };
   const idx = devices.findIndex(d => String(d.serial) === String(retState.device.serial));
   devices[idx].currentHolderMat = null;
   devices[idx].currentHolderName = null;
@@ -730,9 +755,10 @@ async function confirmReturn() {
 }
 
 function resetReturn() {
-  retState = { employee: null, device: null, condition: null };
+  retState = { employee: null, device: null, condition: null, obs: '' };
   ['ret-receiver','ret-emp-input','ret-dev-input'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.className = 'form-control scan-input'; });
   ['ret-emp-result','ret-dev-result','ret-cond-result'].forEach(id => { document.getElementById(id).innerHTML = ''; });
+  document.getElementById('ret-obs').value = '';
   document.getElementById('ret-emp-input').disabled = true;
   document.getElementById('ret-dev-input').disabled = true;
   document.getElementById('ret-confirm-btn').disabled = true;
@@ -840,7 +866,8 @@ function renderHistory() {
       const icon = t.type === 'checkout' ? '⬆️' : '⬇️';
       const cls  = t.type === 'checkout' ? 'badge-checkout' : 'badge-return';
       const who  = t.type === 'checkout' ? `Entregue por: ${t.deliveredBy||'—'}` : `Recebido por: ${t.receivedBy||'—'}`;
-      return `<div class="hist-row"><div class="d-flex align-items-start gap-2 flex-wrap"><span class="badge ${cls}">${icon} ${t.type==='checkout'?'Entrega':'Devolução'}</span><div><div><b>${t.employeeName}</b> (${t.employeeMat}) — <b>${t.deviceSerial}</b> ${t.deviceModelo?'('+t.deviceModelo+')':''} [${t.deviceTipo}]</div><div class="text-muted small">${fmtDate(t.datetime)} &bull; Condição: ${t.condition} &bull; ${who}</div></div></div></div>`;
+      const obsHtml = t.obs ? `<div class="text-muted small fst-italic">💬 ${t.obs}</div>` : '';
+      return `<div class="hist-row"><div class="d-flex align-items-start gap-2 flex-wrap"><span class="badge ${cls}">${icon} ${t.type==='checkout'?'Entrega':'Devolução'}</span><div><div><b>${t.employeeName}</b> (${t.employeeMat}) — <b>${t.deviceSerial}</b> ${t.deviceModelo?'('+t.deviceModelo+')':''} [${t.deviceTipo}]</div><div class="text-muted small">${fmtDate(t.datetime)} &bull; Condição: ${t.condition} &bull; ${who}</div>${obsHtml}</div></div></div>`;
     }).join('');
     return `<div class="accordion-item border-0 mb-2"><h2 class="accordion-header"><button class="accordion-button ${isOpen?'':'collapsed'} rounded-3 fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}">📅 ${m.label} <span class="badge bg-secondary ms-2">${m.items.length}</span></button></h2><div id="${collapseId}" class="accordion-collapse collapse ${isOpen?'show':''}"><div class="accordion-body p-0 pt-2">${items}</div></div></div>`;
   }).join('');
@@ -849,8 +876,8 @@ function renderHistory() {
 }
 
 function exportHistoryCSV() {
-  const rows = [['Data/Hora','Tipo','Colaborador','Matrícula','Serial','Modelo','Tipo Aparelho','Condição','Responsável']];
-  transactions.forEach(t => rows.push([fmtDate(t.datetime), t.type==='checkout'?'Entrega':'Devolução', t.employeeName, t.employeeMat, t.deviceSerial, t.deviceModelo, t.deviceTipo, t.condition, t.type==='checkout'?(t.deliveredBy||''):(t.receivedBy||'')]));
+  const rows = [['Data/Hora','Tipo','Colaborador','Matrícula','Serial','Modelo','Tipo Aparelho','Condição','Responsável','Observação']];
+  transactions.forEach(t => rows.push([fmtDate(t.datetime), t.type==='checkout'?'Entrega':'Devolução', t.employeeName, t.employeeMat, t.deviceSerial, t.deviceModelo, t.deviceTipo, t.condition, t.type==='checkout'?(t.deliveredBy||''):(t.receivedBy||''), t.obs||'']));
   const csv = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,﻿' + encodeURIComponent(csv); a.download = `historico_${new Date().toISOString().slice(0,10)}.csv`; a.click();
 }
@@ -882,18 +909,46 @@ async function removeDevice(serial) {
 function renderDeviceList(q = '') {
   const list = document.getElementById('dev-list');
   const filtered = devices.filter(d => !q || d.serial?.toLowerCase().includes(q.toLowerCase()) || d.modelo?.toLowerCase().includes(q.toLowerCase()) || d.tipo?.toLowerCase().includes(q.toLowerCase()));
-  if (!filtered.length) { list.innerHTML = '<div class="text-muted small p-2">Nenhum aparelho cadastrado</div>'; return; }
+  if (!filtered.length) { list.innerHTML = '<div class="text-muted small p-2">Nenhum aparelho cadastrado</div>'; updateDeviceBulkBar(); return; }
   list.innerHTML = filtered.map(d => {
     const icon = (deviceTypes.find(t => t.name === d.tipo)||{}).icon || '📦';
     const inUse = d.currentHolderMat && d.currentHolderMat !== 'null';
     const status = inUse ? `<span class="badge bg-warning text-dark"><i class="bi bi-person me-1"></i>${d.currentHolderName || d.currentHolderMat}</span>` : `<span class="badge bg-success">Disponível</span>`;
-    return `<div class="hist-row d-flex justify-content-between align-items-center"><div>${icon} <b>${d.serial}</b> ${d.modelo?'— '+d.modelo:''} <span class="text-muted small">[${d.tipo||'—'}]</span></div><div class="d-flex align-items-center gap-2">${status}<button class="btn btn-sm btn-outline-danger py-0" onclick="removeDevice('${d.serial}')"><i class="bi bi-trash"></i></button></div></div>`;
+    return `<div class="hist-row d-flex align-items-center gap-2"><input type="checkbox" class="dev-cb form-check-input mt-0 flex-shrink-0" value="${d.serial}" onchange="updateDeviceBulkBar()"><div class="flex-grow-1 d-flex justify-content-between align-items-center"><div>${icon} <b>${d.serial}</b> ${d.modelo?'— '+d.modelo:''} <span class="text-muted small">[${d.tipo||'—'}]</span></div><div class="d-flex align-items-center gap-2">${status}<button class="btn btn-sm btn-outline-danger py-0" onclick="removeDevice('${d.serial}')"><i class="bi bi-trash"></i></button></div></div></div>`;
   }).join('');
+  updateDeviceBulkBar();
+}
+
+function updateDeviceBulkBar() {
+  const cbs = document.querySelectorAll('.dev-cb:checked');
+  const bar = document.getElementById('dev-bulk-bar');
+  const btn = document.getElementById('dev-delete-btn');
+  const cnt = document.getElementById('dev-sel-count');
+  const all = document.getElementById('dev-select-all');
+  const total = document.querySelectorAll('.dev-cb').length;
+  cnt.textContent = cbs.length;
+  btn.style.display = cbs.length > 0 ? '' : 'none';
+  if (all) all.checked = total > 0 && cbs.length === total;
+}
+
+function toggleSelectAllDevices(checked) {
+  document.querySelectorAll('.dev-cb').forEach(cb => cb.checked = checked);
+  updateDeviceBulkBar();
+}
+
+async function deleteSelectedDevices() {
+  const serials = [...document.querySelectorAll('.dev-cb:checked')].map(cb => cb.value);
+  if (!serials.length) return;
+  if (!confirm(`Remover ${serials.length} aparelho(s)?`)) return;
+  devices = devices.filter(d => !serials.includes(String(d.serial)));
+  await sheetsWrite('devices', devices);
+  renderDeviceList(); renderDashboard();
+  showToast(`${serials.length} aparelho(s) removido(s)`, 'success');
 }
 
 function importDevicesCSV(input) {
   const file = input.files[0]; if (!file) return;
-  Papa.parse(file, { header: true, skipEmptyLines: true, complete: async results => {
+  Papa.parse(file, { header: true, skipEmptyLines: true, dynamicTyping: false, complete: async results => {
     let added = 0;
     results.data.forEach(row => {
       const serial = (row.serial||row.Serial||row.SERIAL||'').trim();
@@ -933,16 +988,43 @@ async function removeEmployee(mat) {
 function renderEmployeeList(q = '') {
   const list = document.getElementById('emp-list');
   const filtered = employees.filter(e => !q || String(e.matricula).includes(q) || e.nome?.toLowerCase().includes(q.toLowerCase()));
-  if (!filtered.length) { list.innerHTML = '<div class="text-muted small p-2">Nenhum colaborador cadastrado</div>'; return; }
+  if (!filtered.length) { list.innerHTML = '<div class="text-muted small p-2">Nenhum colaborador cadastrado</div>'; updateEmployeeBulkBar(); return; }
   list.innerHTML = filtered.map(e => {
     const out = devices.filter(d => d.currentHolderMat && d.currentHolderMat !== 'null' && String(d.currentHolderMat) === String(e.matricula)).map(d => { const icon = (deviceTypes.find(t => t.name === d.tipo)||{}).icon||'📦'; return `${icon} ${d.serial}`; }).join(', ');
-    return `<div class="hist-row d-flex justify-content-between align-items-center"><div><b>${e.nome}</b> <span class="text-muted small">— ${e.matricula}</span>${out?`<br><span class="small text-warning">${out}</span>`:''}</div><button class="btn btn-sm btn-outline-danger py-0" onclick="removeEmployee('${e.matricula}')"><i class="bi bi-trash"></i></button></div>`;
+    return `<div class="hist-row d-flex align-items-center gap-2"><input type="checkbox" class="emp-cb form-check-input mt-0 flex-shrink-0" value="${e.matricula}" onchange="updateEmployeeBulkBar()"><div class="flex-grow-1 d-flex justify-content-between align-items-center"><div><b>${e.nome}</b> <span class="text-muted small">— ${e.matricula}</span>${out?`<br><span class="small text-warning">${out}</span>`:''}</div><button class="btn btn-sm btn-outline-danger py-0" onclick="removeEmployee('${e.matricula}')"><i class="bi bi-trash"></i></button></div></div>`;
   }).join('');
+  updateEmployeeBulkBar();
+}
+
+function updateEmployeeBulkBar() {
+  const cbs = document.querySelectorAll('.emp-cb:checked');
+  const btn = document.getElementById('emp-delete-btn');
+  const cnt = document.getElementById('emp-sel-count');
+  const all = document.getElementById('emp-select-all');
+  const total = document.querySelectorAll('.emp-cb').length;
+  cnt.textContent = cbs.length;
+  btn.style.display = cbs.length > 0 ? '' : 'none';
+  if (all) all.checked = total > 0 && cbs.length === total;
+}
+
+function toggleSelectAllEmployees(checked) {
+  document.querySelectorAll('.emp-cb').forEach(cb => cb.checked = checked);
+  updateEmployeeBulkBar();
+}
+
+async function deleteSelectedEmployees() {
+  const mats = [...document.querySelectorAll('.emp-cb:checked')].map(cb => cb.value);
+  if (!mats.length) return;
+  if (!confirm(`Remover ${mats.length} colaborador(es)?`)) return;
+  employees = employees.filter(e => !mats.includes(String(e.matricula)));
+  await sheetsWrite('employees', employees);
+  renderEmployeeList();
+  showToast(`${mats.length} colaborador(es) removido(s)`, 'success');
 }
 
 function importEmployeesCSV(input) {
   const file = input.files[0]; if (!file) return;
-  Papa.parse(file, { header: true, skipEmptyLines: true, complete: async results => {
+  Papa.parse(file, { header: true, skipEmptyLines: true, dynamicTyping: false, complete: async results => {
     let added = 0;
     results.data.forEach(row => {
       const mat  = (row.matricula||row.Matricula||row.MATRICULA||row['matrícula']||'').trim();
