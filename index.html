@@ -266,7 +266,7 @@
             <span class="text-muted small ms-2">Colunas: serial, modelo, tipo</span>
           </div>
           <input type="search" class="form-control form-control-sm mb-2" placeholder="Buscar aparelho..." oninput="renderDeviceList(this.value)">
-          <div class="d-flex align-items-center gap-2 mb-1" id="dev-bulk-bar" style="display:none!important">
+          <div class="d-flex align-items-center gap-2 mb-1" id="dev-bulk-bar">
             <input type="checkbox" id="dev-select-all" onchange="toggleSelectAllDevices(this.checked)" title="Selecionar todos">
             <label for="dev-select-all" class="small text-muted mb-0">Selecionar todos</label>
             <button class="btn btn-danger btn-sm ms-auto" id="dev-delete-btn" onclick="deleteSelectedDevices()" style="display:none"><i class="bi bi-trash me-1"></i>Excluir selecionados (<span id="dev-sel-count">0</span>)</button>
@@ -284,7 +284,7 @@
             <span class="text-muted small ms-2">Colunas: matricula, nome</span>
           </div>
           <input type="search" class="form-control form-control-sm mb-2" placeholder="Buscar colaborador..." oninput="renderEmployeeList(this.value)">
-          <div class="d-flex align-items-center gap-2 mb-1" id="emp-bulk-bar" style="display:none!important">
+          <div class="d-flex align-items-center gap-2 mb-1" id="emp-bulk-bar">
             <input type="checkbox" id="emp-select-all" onchange="toggleSelectAllEmployees(this.checked)" title="Selecionar todos">
             <label for="emp-select-all" class="small text-muted mb-0">Selecionar todos</label>
             <button class="btn btn-danger btn-sm ms-auto" id="emp-delete-btn" onclick="deleteSelectedEmployees()" style="display:none"><i class="bi bi-trash me-1"></i>Excluir selecionados (<span id="emp-sel-count">0</span>)</button>
@@ -352,7 +352,7 @@
 // ==========================================
 // ⚙️ CONFIGURAÇÃO — cole aqui a URL do Apps Script
 // ==========================================
-const APPS_SCRIPT_URL = 'https://script.google.com/a/macros/mercadolivre.com/s/AKfycbwOUjUSqY-4xmz-ASwgIPF77MuFd2l5m1s5VfBW9GSHpe4P3tjskjCj8tIZk46dsDg/exec';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwK4vfSJD1Mze_H-KsDonalqDTbe17ta606X9kQYTVfeaUGCNiBq-jAFWHmgkc5KE-VnQ/exec';
 // Exemplo:
 // const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycb.../exec';
 
@@ -409,7 +409,13 @@ async function syncFromSheets(silent = false) {
   if (!sheetsUrl) return;
   if (!silent) setBadge('syncing');
   const data = await sheetsRead();
-  if (!data) { if (!silent) setBadge('offline'); isOnline = false; return; }
+  if (!data) {
+    isOnline = false;
+    setBadge('offline');
+    // Retry after 5 seconds if we have a URL but failed to connect
+    if (sheetsUrl) setTimeout(() => syncFromSheets(true).then(() => { if (isOnline) startPolling(); }), 5000);
+    return;
+  }
 
   const hash = JSON.stringify(data);
   if (hash === lastSyncHash && silent) return;
@@ -428,7 +434,10 @@ async function syncFromSheets(silent = false) {
 
 function startPolling() {
   if (syncPollInterval) clearInterval(syncPollInterval);
-  syncPollInterval = setInterval(() => syncFromSheets(true), 15000);
+  // Poll every 15s; if offline, try to reconnect silently
+  syncPollInterval = setInterval(() => {
+    if (sheetsUrl) syncFromSheets(true);
+  }, 15000);
 }
 
 // ==========================================
@@ -506,7 +515,7 @@ async function init() {
     document.getElementById('sheets-url').value = savedUrl;
     setBadge('connecting');
     await syncFromSheets();
-    startPolling();
+    startPolling(); // always start polling so it reconnects automatically if first attempt failed
   } else {
     setBadge('offline');
   }
